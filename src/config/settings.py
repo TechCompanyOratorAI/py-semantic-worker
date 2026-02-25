@@ -24,7 +24,7 @@ class Settings:
     AWS_ACCESS_KEY_ID = os.getenv('AWS_ACCESS_KEY_ID')
     AWS_SECRET_ACCESS_KEY = os.getenv('AWS_SECRET_ACCESS_KEY')
     AWS_REGION = os.getenv('AWS_REGION', 'ap-southeast-1')
-    AWS_SQS_ANALYSIS_QUEUE_URL = os.getenv('AWS_SQS_ANALYSIS_QUEUE_URL')
+    AWS_SQS_SEMANTIC_QUEUE_URL = os.getenv('AWS_SQS_SEMANTIC_QUEUE_URL')
     
     # Database Configuration
     DATABASE_URL = os.getenv('DATABASE_URL')
@@ -57,7 +57,7 @@ class Settings:
         required_settings = [
             'AWS_ACCESS_KEY_ID',
             'AWS_SECRET_ACCESS_KEY', 
-            'AWS_SQS_ANALYSIS_QUEUE_URL',
+            'AWS_SQS_SEMANTIC_QUEUE_URL',
             'DB_USER',
             'DB_PASSWORD'
         ]
