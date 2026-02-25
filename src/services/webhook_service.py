@@ -20,7 +20,9 @@ class WebhookService:
     def __init__(self):
         self.base_url = settings.WEBHOOK_BASE_URL
         self.secret = settings.WEBHOOK_SECRET
-        self.timeout = 30
+        self.timeout = 120  # Increased from 30s to 120s for large payloads
+        self.max_retries = 3
+        self.retry_delay = 5  # Base delay in seconds
     
     def _get_headers(self) -> Dict[str, str]:
         """Get headers for webhook requests"""
