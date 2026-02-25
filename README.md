@@ -32,22 +32,26 @@ SQS Analysis Queue → Semantic Worker → Database + Webhook
 ### Setup
 
 1. **Clone and navigate to directory**
+
 ```bash
 cd py-semantic-worker
 ```
 
 2. **Install dependencies**
+
 ```bash
 pip install -r requirements.txt
 ```
 
 3. **Configure environment**
+
 ```bash
 cp .env.example .env
 # Edit .env with your configuration
 ```
 
 4. **Run the worker**
+
 ```bash
 python main.py
 ```
@@ -61,7 +65,7 @@ python main.py
 AWS_ACCESS_KEY_ID=your_access_key
 AWS_SECRET_ACCESS_KEY=your_secret_key
 AWS_REGION=ap-southeast-1
-AWS_SQS_ANALYSIS_QUEUE_URL=https://sqs.region.amazonaws.com/account/queue-name
+AWS_SQS_SEMANTIC_QUEUE_URL=https://sqs.region.amazonaws.com/account/queue-name
 
 # Database Configuration
 DATABASE_URL=postgresql://user:pass@host:port/db
@@ -101,6 +105,7 @@ LOG_FORMAT=colored
 ### 1. Message Processing
 
 The worker polls the SQS analysis queue for jobs containing:
+
 ```json
 {
   "jobId": 123,
@@ -114,6 +119,7 @@ The worker polls the SQS analysis queue for jobs containing:
 ### 2. Data Retrieval
 
 For each job, the worker fetches:
+
 - Presentation details and topic information
 - Transcript segments with timestamps
 - Slide content (OCR extracted text)
@@ -121,18 +127,21 @@ For each job, the worker fetches:
 ### 3. Semantic Analysis
 
 **Content Relevance Analysis**:
+
 - Compares each transcript segment with topic name/description
 - Uses multilingual sentence embeddings
 - Identifies topic keywords mentioned
 - Flags off-topic content
 
 **Semantic Similarity Analysis**:
+
 - Compares transcript segments with slide content
 - Finds best matching slides for each segment
 - Calculates cosine similarity scores
 - Identifies content misalignment
 
 **Timing Alignment Analysis**:
+
 - Analyzes if speech timing matches slide progression
 - Calculates expected slide for each segment
 - Measures timing deviations
@@ -141,6 +150,7 @@ For each job, the worker fetches:
 ### 4. Results
 
 The worker generates:
+
 - **Segment-level scores**: Relevance, similarity, alignment for each segment
 - **Overall scores**: Aggregated presentation quality metrics
 - **Issues and suggestions**: Specific improvement recommendations
@@ -149,6 +159,7 @@ The worker generates:
 ### 5. Webhook Delivery
 
 Results are sent to the Node API via webhook:
+
 ```json
 {
   "jobId": 123,
@@ -170,21 +181,25 @@ Results are sent to the Node API via webhook:
 ## Analysis Metrics
 
 ### Content Relevance (0.0 - 1.0)
+
 - Measures how well transcript content relates to the presentation topic
 - Uses semantic similarity between segment text and topic description
 - Identifies topic keywords mentioned in speech
 
 ### Semantic Similarity (0.0 - 1.0)
+
 - Measures alignment between speech and slide content
 - Finds best matching slides for each transcript segment
 - Detects when speaker content doesn't match displayed slides
 
 ### Slide Alignment (0.0 - 1.0)
+
 - Measures timing alignment between speech and slide progression
 - Calculates expected slide based on segment timing
 - Identifies pacing issues (too fast/slow slide transitions)
 
 ### Overall Score (0.0 - 1.0)
+
 - Weighted average of all metrics
 - Provides single quality indicator
 - Used for presentation ranking and comparison
@@ -205,18 +220,21 @@ docker run -d \
 ## Monitoring
 
 ### Health Checks
+
 - Database connectivity
 - SQS queue access
 - Webhook endpoint reachability
 - Model loading status
 
 ### Metrics
+
 - Jobs processed/succeeded/failed
 - Processing times
 - Queue depth
 - Error rates
 
 ### Logs
+
 - Structured logging with timestamps
 - Color-coded log levels
 - Detailed error traces
@@ -227,22 +245,26 @@ docker run -d \
 ### Common Issues
 
 **Model Loading Errors**:
+
 ```bash
 # Check if model can be downloaded
 python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2')"
 ```
 
 **Database Connection Issues**:
+
 ```bash
 # Test database connectivity
 python -c "import psycopg2; psycopg2.connect('your_database_url')"
 ```
 
 **SQS Permission Issues**:
+
 - Ensure IAM user has `sqs:ReceiveMessage`, `sqs:DeleteMessage` permissions
 - Check queue URL and region configuration
 
 **Webhook Failures**:
+
 - Verify webhook endpoint is accessible
 - Check webhook secret configuration
 - Monitor Node API logs for webhook processing errors
@@ -250,10 +272,12 @@ python -c "import psycopg2; psycopg2.connect('your_database_url')"
 ### Performance Tuning
 
 **Memory Usage**:
+
 - Adjust `BATCH_SIZE` based on available memory
 - Use smaller embedding models for resource-constrained environments
 
 **Processing Speed**:
+
 - Increase `MAX_MESSAGES` for higher throughput
 - Deploy multiple worker instances
 - Use GPU-enabled instances for faster embedding generation
@@ -261,6 +285,7 @@ python -c "import psycopg2; psycopg2.connect('your_database_url')"
 ## Development
 
 ### Project Structure
+
 ```
 py-semantic-worker/
 ├── src/

@@ -46,7 +46,7 @@ class SQSService:
     
     def __init__(self):
         self.client = None
-        self.queue_url = settings.AWS_SQS_ANALYSIS_QUEUE_URL
+        self.queue_url = settings.AWS_SQS_SEMANTIC_QUEUE_URL
         self._initialize_client()
     
     def _initialize_client(self):

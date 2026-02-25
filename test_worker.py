@@ -28,7 +28,7 @@ def test_configuration():
         logger.info(f"   - Worker ID: {settings.WORKER_ID}")
         logger.info(f"   - Embedding Model: {settings.EMBEDDING_MODEL}")
         logger.info(f"   - Database: {settings.DB_HOST}:{settings.DB_PORT}/{settings.DB_NAME}")
-        logger.info(f"   - SQS Queue: {settings.AWS_SQS_ANALYSIS_QUEUE_URL}")
+        logger.info(f"   - SQS Queue: {settings.AWS_SQS_SEMANTIC_QUEUE_URL}")
         logger.info(f"   - Webhook: {settings.WEBHOOK_BASE_URL}")
         
         return True
