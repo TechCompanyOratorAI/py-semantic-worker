@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  semantic-worker:
+    build: .
+    container_name: oratorai-semantic-worker
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./logs:/app/logs
+      - /tmp/semantic-worker:/tmp/semantic-worker
+    depends_on:
+      - postgres
+    networks:
+      - oratorai-network
+
+  postgres:
+    image: postgres:15
+    container_name: semantic-worker-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: oratorai
+      POSTGRES_USER: oratorai_user
+      POSTGRES_PASSWORD: oratorai_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - oratorai-network
+
+volumes:
+  postgres_data:
+
+networks:
+  oratorai-network:
+    driver: bridge
