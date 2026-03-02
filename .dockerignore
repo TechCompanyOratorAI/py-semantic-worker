@@ -1,0 +1,77 @@
+# Docker
+.dockerignore
+Dockerfile*
+docker-compose*.yml
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# Environment files (sensitive!)
+.env
+.env.local
+.env.*.local
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Test files
+tests/
+test_*.py
+*_test.py
+pytest.ini
+.pytest_cache/
+coverage.xml
+.coverage
+htmlcov/
+
+# Documentation
+README.md
+*.md
+docs/
+
+# Logs
+logs/
+*.log
+
+# Temp files
+tmp/
+temp/
+/tmp/
+
+# Cache directories
+.cache/
+*.cache
+model-cache/
+
+# Node (if any)
+node_modules/
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+.travis.yml
