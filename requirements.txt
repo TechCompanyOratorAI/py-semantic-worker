@@ -14,7 +14,8 @@ nltk>=3.8.1
 spacy>=3.7.0
 
 # Database
-psycopg2-binary>=2.9.7
+mysql-connector-python>=8.3.0
+cryptography>=41.0.0
 
 # Utilities
 tqdm>=4.66.0
