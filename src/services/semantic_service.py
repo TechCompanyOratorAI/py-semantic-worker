@@ -75,11 +75,11 @@ class SemanticAnalysisService:
         self._initialize()
     
     def _initialize(self):
-        """Initialize the service"""
+        """Initialize the service with intfloat/multilingual-e5-small"""
         try:
             logger.info(f"🧠 Loading embedding model: {settings.EMBEDDING_MODEL}")
             self.model = SentenceTransformer(settings.EMBEDDING_MODEL)
-            logger.info("✅ Embedding model loaded successfully")
+            logger.info("✅ Embedding model loaded — using E5 query/passage prefixes")
             
             # Load Vietnamese stopwords
             self._load_vietnamese_stopwords()
@@ -152,8 +152,13 @@ class SemanticAnalysisService:
             logger.warning(f"⚠️ Failed to extract keywords: {e}")
             return []
     
-    def _generate_embeddings(self, texts: List[str]) -> np.ndarray:
-        """Generate embeddings for list of texts"""
+    def _generate_embeddings(self, texts: List[str], is_query: bool = False) -> np.ndarray:
+        """Generate embeddings using intfloat/multilingual-e5-small.
+        
+        E5 requires specific prefixes to work correctly:
+          - is_query=True  → prefix 'query: '   (transcript segments searching for matches)
+          - is_query=False → prefix 'passage: ' (topic text / slide content being searched)
+        """
         try:
             if not texts:
                 return np.array([])
@@ -163,7 +168,11 @@ class SemanticAnalysisService:
             if not valid_texts:
                 return np.array([])
             
-            embeddings = self.model.encode(valid_texts, batch_size=settings.BATCH_SIZE)
+            # E5 requires query/passage prefix — mandatory for accuracy
+            prefix = 'query: ' if is_query else 'passage: '
+            prefixed_texts = [prefix + t for t in valid_texts]
+            
+            embeddings = self.model.encode(prefixed_texts, batch_size=settings.BATCH_SIZE)
             return embeddings
             
         except Exception as e:
@@ -204,8 +213,9 @@ class SemanticAnalysisService:
             topic_text = f"{topic_name}. {topic_description or ''}"
             
             # Generate embeddings
-            segment_embedding = self._generate_embeddings([segment_text])
-            topic_embedding = self._generate_embeddings([topic_text])
+            # segment_text is what we search FOR (query), topic is the document (passage)
+            segment_embedding = self._generate_embeddings([segment_text], is_query=True)
+            topic_embedding = self._generate_embeddings([topic_text], is_query=False)
             
             # Calculate similarity
             relevance_score = self._calculate_similarity(segment_embedding, topic_embedding)
@@ -263,8 +273,9 @@ class SemanticAnalysisService:
                 return 0.0, None, []
             
             # Generate embeddings
-            segment_embedding = self._generate_embeddings([segment_text])
-            slide_embeddings = self._generate_embeddings(slide_texts)
+            # segment is the query, slides are the passages
+            segment_embedding = self._generate_embeddings([segment_text], is_query=True)
+            slide_embeddings = self._generate_embeddings(slide_texts, is_query=False)
             
             # Calculate similarities
             similarities = []
