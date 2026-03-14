@@ -9,7 +9,7 @@ then sends results back to Node API via webhook.
 import sys
 import signal
 import time
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 # Add src to path
 sys.path.insert(0, 'src')
@@ -252,7 +252,7 @@ class SemanticWorker:
             Dictionary with analysis results
         """
         # Step 1: Get presentation data
-        logger.info(f"📥 Step 1/4: Loading presentation data...")
+        logger.info(f"📥 Step 1/5: Loading presentation data...")
         presentation_data = self.database_service.get_presentation_data(presentation_id)
         
         if not presentation_data:
@@ -266,15 +266,59 @@ class SemanticWorker:
         if not presentation_data.transcript_segments:
             raise SemanticAnalysisError("No transcript segments found for analysis")
         
-        # Step 2: Perform semantic analysis
-        logger.info(f"🔍 Step 2/4: Performing semantic analysis...")
+        # Step 2: Download audio file for speech analysis (if enabled)
+        audio_file_path = None
+        if settings.SPEECH_ANALYSIS_ENABLED:
+            try:
+                logger.info(f"📥 Step 2/5: Downloading audio file for speech analysis...")
+                
+                # Import S3 service
+                from services.s3_service import get_s3_service
+                s3_service = get_s3_service()
+                
+                # Resolve audio filename with security constraints
+                audio_filename = self._resolve_audio_filename_secure(presentation_id, metadata, s3_service)
+                
+                if audio_filename:
+                    # Download audio file with validation
+                    audio_file_path = s3_service.download_audio_file(
+                        presentation_id=presentation_id,
+                        audio_filename=audio_filename
+                    )
+                    
+                    # Validate downloaded file
+                    if audio_file_path and audio_file_path.exists():
+                        file_size = audio_file_path.stat().st_size
+                        if file_size > 100 * 1024 * 1024:  # 100MB limit
+                            logger.warning(f"⚠️ Audio file too large: {file_size / 1024 / 1024:.1f}MB")
+                            s3_service.cleanup_local_file(audio_file_path)
+                            audio_file_path = None
+                        else:
+                            logger.info(f"✅ Audio file downloaded and validated: {audio_file_path}")
+                    else:
+                        logger.warning("⚠️ Audio file download failed validation")
+                        audio_file_path = None
+                else:
+                    logger.warning("⚠️ No valid audio file found for this presentation")
+                    logger.warning("   Speech quality analysis will be skipped")
+                    
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to download audio file: {e}")
+                logger.warning("   Speech quality analysis will be skipped")
+                audio_file_path = None
         
-        segment_analyses_obj, overall_scores_obj = self.semantic_service.analyze_presentation(presentation_data)
+        # Step 3: Perform comprehensive analysis (semantic + speech quality)
+        logger.info(f"🔍 Step 3/5: Performing comprehensive analysis...")
+        
+        segment_analyses_obj, overall_scores_obj = self.semantic_service.analyze_presentation(
+            presentation_data, 
+            audio_file_path=str(audio_file_path) if audio_file_path else None
+        )
         
         # Convert to API format
         segment_analyses = []
         for analysis in segment_analyses_obj:
-            segment_analyses.append({
+            segment_data = {
                 'segmentId': analysis.segment_id,
                 'relevanceScore': analysis.relevance_score,
                 'semanticScore': analysis.semantic_score,
@@ -285,7 +329,13 @@ class SemanticWorker:
                 'bestMatchingSlide': analysis.best_matching_slide,
                 'expectedSlideNumber': analysis.expected_slide_number,
                 'timingDeviation': analysis.timing_deviation
-            })
+            }
+            
+            # Add speech quality data if available
+            if analysis.speech_quality:
+                segment_data['speechQuality'] = analysis.speech_quality
+            
+            segment_analyses.append(segment_data)
         
         overall_scores = {
             'contentRelevance': overall_scores_obj.content_relevance,
@@ -294,8 +344,18 @@ class SemanticWorker:
             'overallScore': overall_scores_obj.overall_score
         }
         
-        # Step 3: Format results
-        logger.info(f"📦 Step 3/4: Formatting results...")
+        # Add speech quality scores if available
+        if overall_scores_obj.speech_fluency is not None:
+            overall_scores['speechFluency'] = overall_scores_obj.speech_fluency
+        if overall_scores_obj.speech_clarity is not None:
+            overall_scores['speechClarity'] = overall_scores_obj.speech_clarity
+        if overall_scores_obj.speech_confidence is not None:
+            overall_scores['speechConfidence'] = overall_scores_obj.speech_confidence
+        if overall_scores_obj.speech_overall is not None:
+            overall_scores['speechOverall'] = overall_scores_obj.speech_overall
+        
+        # Step 4: Format results
+        logger.info(f"📦 Step 4/5: Formatting results...")
         
         result_metadata = {
             'embeddingModel': settings.EMBEDDING_MODEL,
@@ -303,7 +363,9 @@ class SemanticWorker:
             'totalSegments': len(segment_analyses),
             'totalSlides': len(presentation_data.slides),
             'topicName': presentation_data.topic_name,
-            'topicDescription': presentation_data.topic_description
+            'topicDescription': presentation_data.topic_description,
+            'speechAnalysisEnabled': settings.SPEECH_ANALYSIS_ENABLED,
+            'speechAnalysisPerformed': audio_file_path is not None
         }
         
         logger.info(f"✅ Analysis complete:")
@@ -311,12 +373,129 @@ class SemanticWorker:
         logger.info(f"   - Content relevance: {overall_scores['contentRelevance']:.2f}")
         logger.info(f"   - Semantic similarity: {overall_scores['semanticSimilarity']:.2f}")
         logger.info(f"   - Slide alignment: {overall_scores['slideAlignment']:.2f}")
+        if 'speechOverall' in overall_scores:
+            logger.info(f"   - Speech quality: {overall_scores['speechOverall']:.2f}")
+        
+        # Step 5: Cleanup audio file
+        if audio_file_path and settings.CLEANUP_TEMP_FILES:
+            try:
+                logger.info(f"🗑️ Step 5/5: Cleaning up audio file...")
+                from services.s3_service import get_s3_service
+                s3_service = get_s3_service()
+                s3_service.cleanup_local_file(audio_file_path)
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to cleanup audio file: {e}")
         
         return {
             'segmentAnalyses': segment_analyses,
             'overallScores': overall_scores,
             'metadata': result_metadata
         }
+    
+    def _resolve_audio_filename_secure(self, presentation_id: int, metadata: Dict[str, Any], s3_service) -> Optional[str]:
+        """
+        Securely resolve audio filename with validation constraints
+        
+        Args:
+            presentation_id: Presentation ID
+            metadata: Job metadata from SQS
+            s3_service: S3 service instance
+            
+        Returns:
+            Validated audio filename or None
+        """
+        logger.info(f"🔍 Resolving audio file for presentation {presentation_id}")
+        logger.info(f"   - Metadata audioFilename: {metadata.get('audioFilename', 'Not provided')}")
+        logger.info(f"   - User ID: {metadata.get('userId', 'Not provided')}")
+        
+        # Priority 1: Explicit filename from metadata (with validation)
+        if metadata.get('audioFilename'):
+            filename = metadata['audioFilename']
+            
+            # Security validation
+            if self._validate_audio_filename_security(filename, presentation_id):
+                if s3_service.check_audio_file_exists(filename):
+                    logger.info(f"✅ Using explicit audio filename: {filename}")
+                    return filename
+                else:
+                    logger.warning(f"⚠️ Explicit audio file not found: {filename}")
+            else:
+                logger.warning(f"⚠️ Audio filename failed security validation: {filename}")
+        
+        # Priority 2: Standard naming conventions (most secure)
+        standard_patterns = [
+            f"presentation_{presentation_id}.wav",
+            f"presentation_{presentation_id}.mp3",
+            f"presentation_{presentation_id}.mp4",
+            f"pres_{presentation_id}.wav",
+            f"pres_{presentation_id}.mp3",
+            f"pres_{presentation_id}.mp4"
+        ]
+        
+        for pattern in standard_patterns:
+            if s3_service.check_audio_file_exists(pattern):
+                logger.info(f"✅ Using standard pattern: {pattern}")
+                return pattern
+        
+        # Priority 3: User-specific patterns (if user info available)
+        if metadata.get('userId'):
+            user_id = metadata['userId']
+            user_patterns = [
+                f"user_{user_id}_presentation_{presentation_id}.wav",
+                f"user_{user_id}_presentation_{presentation_id}.mp3",
+                f"user_{user_id}_presentation_{presentation_id}.mp4",
+                f"u{user_id}_p{presentation_id}.wav",
+                f"u{user_id}_p{presentation_id}.mp3",
+                f"u{user_id}_p{presentation_id}.mp4"
+            ]
+            
+            for pattern in user_patterns:
+                if s3_service.check_audio_file_exists(pattern):
+                    logger.info(f"✅ Using user-specific pattern: {pattern}")
+                    return pattern
+        
+        logger.warning(f"❌ No valid audio file found for presentation {presentation_id}")
+        return None
+    
+    def _validate_audio_filename_security(self, filename: str, presentation_id: int) -> bool:
+        """
+        Validate audio filename for security constraints
+        
+        Args:
+            filename: Audio filename to validate
+            presentation_id: Expected presentation ID
+            
+        Returns:
+            True if filename passes security validation
+        """
+        # Check for path traversal attempts
+        if '..' in filename or '/' in filename.replace(settings.S3_AUDIO_PREFIX, ''):
+            logger.warning(f"⚠️ Path traversal attempt detected: {filename}")
+            return False
+        
+        # Must contain presentation ID for security
+        if str(presentation_id) not in filename:
+            logger.warning(f"⚠️ Filename doesn't contain presentation ID {presentation_id}: {filename}")
+            return False
+        
+        # Must have valid audio extension
+        valid_extensions = ['.wav', '.mp3', '.mp4', '.m4a', '.flac', '.aac']
+        if not any(filename.lower().endswith(ext) for ext in valid_extensions):
+            logger.warning(f"⚠️ Invalid audio file extension: {filename}")
+            return False
+        
+        # Check filename length (prevent extremely long filenames)
+        if len(filename) > 255:
+            logger.warning(f"⚠️ Filename too long: {len(filename)} characters")
+            return False
+        
+        # Check for suspicious characters
+        suspicious_chars = ['<', '>', '|', ':', '*', '?', '"', '\\']
+        if any(char in filename for char in suspicious_chars):
+            logger.warning(f"⚠️ Suspicious characters in filename: {filename}")
+            return False
+        
+        return True
     
     def stop(self):
         """Stop the worker gracefully"""

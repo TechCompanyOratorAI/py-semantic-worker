@@ -17,6 +17,13 @@ spacy>=3.7.0
 mysql-connector-python>=8.3.0
 cryptography>=41.0.0
 
+# Speech Analysis
+opensmile>=2.5.0
+librosa>=0.10.0
+soundfile>=0.12.0
+pydub>=0.25.0
+
+
 # Utilities
 tqdm>=4.66.0
 colorlog>=6.7.0

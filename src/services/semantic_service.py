@@ -1,10 +1,11 @@
 """
 Semantic Analysis Service
 
-Performs semantic analysis comparing:
+Performs comprehensive analysis including:
 1. Transcript segments vs Topic (content relevance)
 2. Transcript segments vs Slides (semantic similarity) 
 3. Transcript timing vs Slide sequence (alignment)
+4. Speech quality analysis (hesitation patterns, fluency)
 """
 
 import re
@@ -57,6 +58,9 @@ class SegmentAnalysis:
     # Issues and suggestions
     issues: List[str]
     suggestions: List[str]
+    
+    # Speech quality analysis (optional)
+    speech_quality: Optional[Dict[str, Any]] = None
 
 @dataclass
 class OverallScores:
@@ -65,6 +69,12 @@ class OverallScores:
     semantic_similarity: float
     slide_alignment: float
     overall_score: float
+    
+    # Speech quality scores (optional)
+    speech_fluency: Optional[float] = None
+    speech_clarity: Optional[float] = None
+    speech_confidence: Optional[float] = None
+    speech_overall: Optional[float] = None
 
 class SemanticAnalysisService:
     """Service for performing semantic analysis"""
@@ -340,21 +350,42 @@ class SemanticAnalysisService:
             logger.warning(f"⚠️ Failed to analyze alignment: {e}")
             return 0.0, None, None
     
-    def analyze_presentation(self, presentation_data: PresentationData) -> Tuple[List[SegmentAnalysis], OverallScores]:
+    def analyze_presentation(
+        self, 
+        presentation_data: PresentationData,
+        audio_file_path: Optional[str] = None
+    ) -> Tuple[List[SegmentAnalysis], OverallScores]:
         """
         Perform comprehensive semantic analysis of presentation
         
         Args:
             presentation_data: Complete presentation data
+            audio_file_path: Optional path to audio file for speech quality analysis
             
         Returns:
             (segment_analyses, overall_scores)
         """
-        logger.info("🔍 Starting semantic analysis...")
+        logger.info("🔍 Starting comprehensive semantic analysis...")
         
         segment_analyses = []
         total_segments = len(presentation_data.transcript_segments)
         total_slides = len(presentation_data.slides)
+        
+        # Initialize speech quality analysis if enabled and audio file provided
+        speech_quality_metrics = None
+        if settings.SPEECH_ANALYSIS_ENABLED and audio_file_path:
+            try:
+                from pathlib import Path
+                from services.speech_quality_service import get_speech_quality_service
+                
+                logger.info("🎤 Performing speech quality analysis...")
+                speech_service = get_speech_quality_service()
+                speech_quality_metrics = speech_service.analyze_speech_quality(Path(audio_file_path))
+                logger.info("✅ Speech quality analysis completed")
+                
+            except Exception as e:
+                logger.warning(f"⚠️ Speech quality analysis failed: {e}")
+                speech_quality_metrics = None
         
         # Estimate presentation duration from last segment
         presentation_duration = None
@@ -417,6 +448,41 @@ class SemanticAnalysisService:
             if off_topic_indicators:
                 issues.extend(off_topic_indicators)
             
+            # Add speech quality information for this segment if available
+            segment_speech_quality = None
+            if speech_quality_metrics:
+                # Find hesitation patterns that overlap with this segment
+                segment_hesitations = []
+                for pattern in speech_quality_metrics.hesitation_patterns:
+                    # Check if hesitation overlaps with segment time range
+                    if (pattern.start_time <= end_time and pattern.end_time >= start_time):
+                        segment_hesitations.append({
+                            'startTime': pattern.start_time,
+                            'endTime': pattern.end_time,
+                            'duration': pattern.duration,
+                            'type': pattern.pattern_type,
+                            'confidence': pattern.confidence,
+                            'description': pattern.description
+                        })
+                
+                if segment_hesitations:
+                    segment_speech_quality = {
+                        'hesitationPatterns': segment_hesitations,
+                        'hesitationCount': len(segment_hesitations),
+                        'totalHesitationTime': sum(p['duration'] for p in segment_hesitations)
+                    }
+                    
+                    # Add speech-related issues and suggestions
+                    if len(segment_hesitations) > 1:
+                        issues.append(f"Multiple hesitations detected ({len(segment_hesitations)})")
+                        suggestions.append("Practice this section to reduce hesitations")
+                    
+                    total_hesitation_time = segment_speech_quality['totalHesitationTime']
+                    segment_duration = end_time - start_time
+                    if segment_duration > 0 and total_hesitation_time / segment_duration > 0.2:
+                        issues.append("High hesitation ratio in this segment")
+                        suggestions.append("Focus on smoother delivery for this part")
+
             # Create segment analysis
             analysis = SegmentAnalysis(
                 segment_id=segment_id,
@@ -432,7 +498,8 @@ class SemanticAnalysisService:
                 expected_slide_number=expected_slide_number,
                 timing_deviation=timing_deviation,
                 issues=issues,
-                suggestions=suggestions
+                suggestions=suggestions,
+                speech_quality=segment_speech_quality
             )
             
             segment_analyses.append(analysis)
@@ -446,17 +513,37 @@ class SemanticAnalysisService:
         else:
             avg_relevance = avg_semantic = avg_alignment = overall = 0.0
         
+        # Include speech quality scores if available
+        speech_fluency = speech_clarity = speech_confidence = speech_overall = None
+        if speech_quality_metrics:
+            speech_fluency = float(speech_quality_metrics.fluency_score)
+            speech_clarity = float(speech_quality_metrics.clarity_score)
+            speech_confidence = float(speech_quality_metrics.confidence_score)
+            speech_overall = float(speech_quality_metrics.overall_quality)
+            
+            # Adjust overall score to include speech quality (weighted)
+            overall = (overall * 0.7 + speech_overall * 0.3)  # 70% semantic, 30% speech
+        
         overall_scores = OverallScores(
             content_relevance=float(avg_relevance),
             semantic_similarity=float(avg_semantic),
             slide_alignment=float(avg_alignment),
-            overall_score=float(overall)
+            overall_score=float(overall),
+            speech_fluency=speech_fluency,
+            speech_clarity=speech_clarity,
+            speech_confidence=speech_confidence,
+            speech_overall=speech_overall
         )
         
-        logger.info("✅ Semantic analysis completed:")
+        logger.info("✅ Comprehensive analysis completed:")
         logger.info(f"   - Content relevance: {overall_scores.content_relevance:.3f}")
         logger.info(f"   - Semantic similarity: {overall_scores.semantic_similarity:.3f}")
         logger.info(f"   - Slide alignment: {overall_scores.slide_alignment:.3f}")
+        if speech_quality_metrics:
+            logger.info(f"   - Speech fluency: {overall_scores.speech_fluency:.3f}")
+            logger.info(f"   - Speech clarity: {overall_scores.speech_clarity:.3f}")
+            logger.info(f"   - Speech confidence: {overall_scores.speech_confidence:.3f}")
+            logger.info(f"   - Speech overall: {overall_scores.speech_overall:.3f}")
         logger.info(f"   - Overall score: {overall_scores.overall_score:.3f}")
         
         return segment_analyses, overall_scores
