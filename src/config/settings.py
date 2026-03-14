@@ -43,6 +43,17 @@ class Settings:
     SIMILARITY_THRESHOLD = float(os.getenv('SIMILARITY_THRESHOLD', '0.7'))
     BATCH_SIZE = int(os.getenv('BATCH_SIZE', '32'))
     
+    # Speech Quality Analysis Configuration
+    SPEECH_ANALYSIS_ENABLED = os.getenv('SPEECH_ANALYSIS_ENABLED', 'true').lower() == 'true'
+    OPENSMILE_CONFIG = os.getenv('OPENSMILE_CONFIG', 'eGeMAPSv02')  # Default feature set
+    SPEECH_SAMPLE_RATE = int(os.getenv('SPEECH_SAMPLE_RATE', '16000'))
+    SPEECH_CHUNK_DURATION = float(os.getenv('SPEECH_CHUNK_DURATION', '3.0'))  # seconds
+    HESITATION_THRESHOLD = float(os.getenv('HESITATION_THRESHOLD', '0.3'))  # silence ratio threshold
+    
+    # S3 Configuration for Audio Files
+    AWS_S3_AUDIO_BUCKET = os.getenv('AWS_S3_AUDIO_BUCKET')
+    S3_AUDIO_PREFIX = os.getenv('S3_AUDIO_PREFIX', 'audio/')
+    
     # Logging Configuration
     LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO')
     LOG_FORMAT = os.getenv('LOG_FORMAT', 'colored')
@@ -61,6 +72,10 @@ class Settings:
             'DB_USER',
             'DB_PASSWORD'
         ]
+        
+        # Add S3 bucket requirement if speech analysis is enabled
+        if cls.SPEECH_ANALYSIS_ENABLED:
+            required_settings.append('AWS_S3_AUDIO_BUCKET')
         
         missing = []
         for setting in required_settings:

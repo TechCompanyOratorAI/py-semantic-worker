@@ -20,7 +20,7 @@ class WebhookService:
     def __init__(self):
         self.base_url = settings.WEBHOOK_BASE_URL
         self.secret = settings.WEBHOOK_SECRET
-        self.timeout = 120  # Increased from 30s to 120s for large payloads
+        self.timeout = 300  # Increased to 300s for speech quality analysis with large datasets
         self.max_retries = 3
         self.retry_delay = 5  # Base delay in seconds
     
@@ -128,19 +128,43 @@ class WebhookService:
                     'alignmentScore': analysis_dict.get('alignment_score', 0.0),
                     'expectedSlideNumber': analysis_dict.get('expected_slide_number', 1),
                     'timingDeviation': analysis_dict.get('timing_deviation', 0.0),
-                    'suggestions': analysis_dict.get('suggestions', [])
+                    'suggestions': analysis_dict.get('suggestions', []),
+                    'speechQuality': analysis_dict.get('speech_quality')  # Add speech quality data
                 }
                 segment_analyses_dict.append(converted_dict)
             else:
                 segment_analyses_dict.append(analysis)
         
+        # Process overall_scores to handle dataclass conversion
+        if dataclasses.is_dataclass(overall_scores):
+            overall_scores_dict = dataclasses.asdict(overall_scores)
+            # Convert snake_case to camelCase for speech quality fields
+            processed_overall_scores = {
+                'contentRelevance': overall_scores_dict.get('content_relevance', 0.0),
+                'semanticSimilarity': overall_scores_dict.get('semantic_similarity', 0.0),
+                'slideAlignment': overall_scores_dict.get('slide_alignment', 0.0),
+                'overallScore': overall_scores_dict.get('overall_score', 0.0)
+            }
+            
+            # Add speech quality scores if available
+            if overall_scores_dict.get('speech_fluency') is not None:
+                processed_overall_scores['speechFluency'] = overall_scores_dict['speech_fluency']
+            if overall_scores_dict.get('speech_clarity') is not None:
+                processed_overall_scores['speechClarity'] = overall_scores_dict['speech_clarity']
+            if overall_scores_dict.get('speech_confidence') is not None:
+                processed_overall_scores['speechConfidence'] = overall_scores_dict['speech_confidence']
+            if overall_scores_dict.get('speech_overall') is not None:
+                processed_overall_scores['speechOverall'] = overall_scores_dict['speech_overall']
+        else:
+            processed_overall_scores = overall_scores
+
         payload = {
             'jobId': job_id,
             'presentationId': presentation_id,
             'status': 'success',
             'analysis': {
                 'segmentAnalyses': segment_analyses_dict,
-                'overallScores': overall_scores,
+                'overallScores': processed_overall_scores,
                 'metadata': metadata or {}
             }
         }
