@@ -3,6 +3,7 @@ Webhook service for sending analysis results back to Node API
 """
 
 import json
+import math
 import requests
 import dataclasses
 from typing import Dict, List, Any, Optional
@@ -13,6 +14,36 @@ from utils.logger import get_logger
 from utils.exceptions import WebhookError
 
 logger = get_logger(__name__)
+
+
+def sanitize_for_json(obj: Any) -> Any:
+    """
+    Recursively convert numpy / non-serializable types to plain Python types
+    so json.dumps / requests.post(json=...) never fail with
+    'Object of type float32 is not JSON serializable'.
+    """
+    # Try numpy first (optional dependency – graceful fallback if not installed)
+    try:
+        import numpy as np
+        if isinstance(obj, np.integer):
+            return int(obj)
+        if isinstance(obj, np.floating):
+            v = float(obj)
+            return None if (math.isnan(v) or math.isinf(v)) else v
+        if isinstance(obj, np.ndarray):
+            return sanitize_for_json(obj.tolist())
+        if isinstance(obj, np.bool_):
+            return bool(obj)
+    except ImportError:
+        pass
+
+    if isinstance(obj, float):
+        return None if (math.isnan(obj) or math.isinf(obj)) else obj
+    if isinstance(obj, dict):
+        return {k: sanitize_for_json(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [sanitize_for_json(v) for v in obj]
+    return obj
 
 class WebhookService:
     """Service for sending webhook notifications"""
@@ -56,6 +87,8 @@ class WebhookService:
         
         try:
             logger.info(f"📤 Sending webhook to {url}")
+            # Sanitize payload – converts numpy float32/int64/ndarray → native Python
+            payload = sanitize_for_json(payload)
             logger.debug(f"Payload: {json.dumps(payload, indent=2)}")
             
             response = requests.post(
