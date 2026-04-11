@@ -354,7 +354,7 @@ class SemanticAnalysisService:
         self, 
         presentation_data: PresentationData,
         audio_file_path: Optional[str] = None
-    ) -> Tuple[List[SegmentAnalysis], OverallScores]:
+    ) -> Tuple[List[SegmentAnalysis], OverallScores, Any]:
         """
         Perform comprehensive semantic analysis of presentation
         
@@ -363,7 +363,8 @@ class SemanticAnalysisService:
             audio_file_path: Optional path to audio file for speech quality analysis
             
         Returns:
-            (segment_analyses, overall_scores)
+            (segment_analyses, overall_scores, speech_quality_metrics)
+            speech_quality_metrics is None if audio analysis was not performed
         """
         logger.info("🔍 Starting comprehensive semantic analysis...")
         
@@ -460,25 +461,28 @@ class SemanticAnalysisService:
                             'startTime': pattern.start_time,
                             'endTime': pattern.end_time,
                             'duration': pattern.duration,
-                            'type': pattern.pattern_type,
+                            'pattern_type': pattern.pattern_type,  # BUG FIX: was 'type', must be 'pattern_type'
                             'confidence': pattern.confidence,
                             'description': pattern.description
                         })
                 
+                total_hesitation_time = sum(p['duration'] for p in segment_hesitations)
+                segment_duration = end_time - start_time
+                
+                # Always set speech_quality for segments when audio analysis is available
+                # (even if no hesitations found — so SegmentSpeechQuality row is always created)
+                segment_speech_quality = {
+                    'hesitationPatterns': segment_hesitations,
+                    'hesitationCount': len(segment_hesitations),
+                    'totalHesitationTime': total_hesitation_time
+                }
+                
                 if segment_hesitations:
-                    segment_speech_quality = {
-                        'hesitationPatterns': segment_hesitations,
-                        'hesitationCount': len(segment_hesitations),
-                        'totalHesitationTime': sum(p['duration'] for p in segment_hesitations)
-                    }
-                    
                     # Add speech-related issues and suggestions
                     if len(segment_hesitations) > 1:
                         issues.append(f"Multiple hesitations detected ({len(segment_hesitations)})")
                         suggestions.append("Practice this section to reduce hesitations")
                     
-                    total_hesitation_time = segment_speech_quality['totalHesitationTime']
-                    segment_duration = end_time - start_time
                     if segment_duration > 0 and total_hesitation_time / segment_duration > 0.2:
                         issues.append("High hesitation ratio in this segment")
                         suggestions.append("Focus on smoother delivery for this part")
@@ -546,7 +550,7 @@ class SemanticAnalysisService:
             logger.info(f"   - Speech overall: {overall_scores.speech_overall:.3f}")
         logger.info(f"   - Overall score: {overall_scores.overall_score:.3f}")
         
-        return segment_analyses, overall_scores
+        return segment_analyses, overall_scores, speech_quality_metrics
 
 # Singleton instance
 _semantic_service = None

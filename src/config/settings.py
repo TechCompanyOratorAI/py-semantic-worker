@@ -44,7 +44,7 @@ class Settings:
     BATCH_SIZE = int(os.getenv('BATCH_SIZE', '32'))
     
     # Speech Quality Analysis Configuration
-    SPEECH_ANALYSIS_ENABLED = os.getenv('SPEECH_ANALYSIS_ENABLED', 'true').lower() == 'true'
+    SPEECH_ANALYSIS_ENABLED = True  # Forced to always be enabled
     OPENSMILE_CONFIG = os.getenv('OPENSMILE_CONFIG', 'eGeMAPSv02')  # Default feature set
     SPEECH_SAMPLE_RATE = int(os.getenv('SPEECH_SAMPLE_RATE', '16000'))
     SPEECH_CHUNK_DURATION = float(os.getenv('SPEECH_CHUNK_DURATION', '3.0'))  # seconds
