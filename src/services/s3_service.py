@@ -66,6 +66,23 @@ class S3Service:
             else:
                 raise S3Error(f"Error accessing S3 bucket: {e}")
     
+    def _build_s3_key(self, audio_filename: str) -> str:
+        """
+        Build the correct S3 object key.
+
+        If `audio_filename` already looks like a full S3 path (contains '/')
+        we use it verbatim — the Node API stores the complete key such as
+        'presentations/46/media/file.mp4'.
+
+        If it is a bare filename (e.g. 'presentation_46.wav') we prepend the
+        configured S3_AUDIO_PREFIX so the old fallback patterns still work.
+        """
+        if '/' in audio_filename:
+            # Already a full S3 path — do NOT add prefix again
+            return audio_filename
+        # Bare filename — prepend prefix (e.g. 'audio/')
+        return f"{settings.S3_AUDIO_PREFIX}{audio_filename}"
+
     def download_audio_file(
         self, 
         presentation_id: int, 
@@ -87,8 +104,8 @@ class S3Service:
             S3Error: If download fails
         """
         try:
-            # Construct S3 key
-            s3_key = f"{settings.S3_AUDIO_PREFIX}{audio_filename}"
+            # Construct S3 key — use helper so we never double-prefix
+            s3_key = self._build_s3_key(audio_filename)
             
             # Determine local path
             if local_path is None:
@@ -140,7 +157,7 @@ class S3Service:
             True if file exists, False otherwise
         """
         try:
-            s3_key = f"{settings.S3_AUDIO_PREFIX}{audio_filename}"
+            s3_key = self._build_s3_key(audio_filename)
             
             self.client.head_object(
                 Bucket=settings.AWS_S3_AUDIO_BUCKET,
@@ -171,7 +188,7 @@ class S3Service:
             Dictionary with file info or None if file doesn't exist
         """
         try:
-            s3_key = f"{settings.S3_AUDIO_PREFIX}{audio_filename}"
+            s3_key = self._build_s3_key(audio_filename)
             
             response = self.client.head_object(
                 Bucket=settings.AWS_S3_AUDIO_BUCKET,
