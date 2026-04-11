@@ -236,8 +236,13 @@ class SpeechQualityService:
                     segment = audio_data[start_sample:end_sample]
                     
                     # Simple heuristic: low spectral complexity might indicate fillers
-                    spectral_centroid = np.mean(librosa.feature.spectral_centroid(y=segment, sr=sr))
-                    spectral_bandwidth = np.mean(librosa.feature.spectral_bandwidth(y=segment, sr=sr))
+                    # Cap n_fft to avoid 'n_fft too large' warning for very short segments
+                    seg_len = len(segment)
+                    if seg_len < 2:
+                        continue  # Too short to analyze
+                    safe_n_fft = 2 ** int(np.log2(seg_len)) if seg_len < 2048 else 2048
+                    spectral_centroid = np.mean(librosa.feature.spectral_centroid(y=segment, sr=sr, n_fft=safe_n_fft))
+                    spectral_bandwidth = np.mean(librosa.feature.spectral_bandwidth(y=segment, sr=sr, n_fft=safe_n_fft))
                     
                     # Low complexity + short duration = potential filler
                     complexity_score = (spectral_centroid / 1000) * (spectral_bandwidth / 1000)
@@ -294,32 +299,39 @@ class SpeechQualityService:
         Returns:
             Dictionary of extracted features
         """
+        temp_path = None
         try:
-            # Create temporary file for openSMILE (it requires file input)
+            # Create temp file – close it BEFORE openSMILE opens it.
+            # On Windows, keeping the file open (via 'with' context) causes
+            # [WinError 32] when openSMILE tries to read it.
             with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_file:
                 temp_path = temp_file.name
-                
-                # Write audio to temporary file
-                sf.write(temp_path, audio_data, sr)
-                
-                # Extract features using openSMILE
-                features = self.smile.process_file(temp_path)
-                
-                # Clean up temporary file
-                os.unlink(temp_path)
-                
-                # Convert to dictionary
-                feature_dict = {}
-                if not features.empty:
-                    for col in features.columns:
-                        feature_dict[col] = float(features[col].iloc[0])
-                
-                logger.info(f"   - Extracted {len(feature_dict)} openSMILE features")
-                return feature_dict
+            
+            # Write audio to the (now-closed) temporary file
+            sf.write(temp_path, audio_data, sr)
+            
+            # Extract features using openSMILE
+            features = self.smile.process_file(temp_path)
+            
+            # Convert to dictionary
+            feature_dict = {}
+            if not features.empty:
+                for col in features.columns:
+                    feature_dict[col] = float(features[col].iloc[0])
+            
+            logger.info(f"   - Extracted {len(feature_dict)} openSMILE features")
+            return feature_dict
                 
         except Exception as e:
             logger.warning(f"⚠️ openSMILE feature extraction failed: {e}")
             return {}
+        finally:
+            # Always clean up temp file, even if openSMILE fails
+            if temp_path and os.path.exists(temp_path):
+                try:
+                    os.unlink(temp_path)
+                except OSError:
+                    pass
     
     def _calculate_speech_metrics(
         self, 
