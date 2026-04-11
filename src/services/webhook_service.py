@@ -121,7 +121,8 @@ class WebhookService:
                     'segmentText': analysis_dict.get('segment_text', ''),
                     'relevanceScore': analysis_dict.get('relevance_score', 0.0),
                     'topicKeywordsFound': analysis_dict.get('topic_keywords_found', []),
-                    'issues': analysis_dict.get('off_topic_indicators', []),  # Map off_topic_indicators to issues
+                    # BUG FIX: combine issues + off_topic_indicators so node-api gets both
+                    'issues': (analysis_dict.get('issues', []) or []) + (analysis_dict.get('off_topic_indicators', []) or []),
                     'semanticScore': analysis_dict.get('semantic_score', 0.0),
                     'bestMatchingSlide': analysis_dict.get('best_matching_slide', 1),
                     'slideSimilarities': analysis_dict.get('slide_similarities', []),
@@ -129,8 +130,30 @@ class WebhookService:
                     'expectedSlideNumber': analysis_dict.get('expected_slide_number', 1),
                     'timingDeviation': analysis_dict.get('timing_deviation', 0.0),
                     'suggestions': analysis_dict.get('suggestions', []),
-                    'speechQuality': analysis_dict.get('speech_quality')  # Add speech quality data
                 }
+                
+                # Add speech quality data with camelCase keys
+                speech_quality_data = analysis_dict.get('speech_quality')
+                if speech_quality_data:
+                    processed_sq = {
+                        'hesitationCount': speech_quality_data.get('hesitation_count', 0),
+                        'totalHesitationTime': speech_quality_data.get('total_hesitation_time', 0.0),
+                        'hesitationPatterns': []
+                    }
+                    if 'hesitation_patterns' in speech_quality_data:
+                        for pattern in speech_quality_data['hesitation_patterns']:
+                            processed_sq['hesitationPatterns'].append({
+                                'startTime': pattern.get('startTime'),       # already camelCase from semantic_service
+                                'endTime': pattern.get('endTime'),
+                                'duration': pattern.get('duration'),
+                                'patternType': pattern.get('pattern_type'),  # semantic_service uses snake_case key
+                                'confidence': pattern.get('confidence'),
+                                'description': pattern.get('description')
+                            })
+                    converted_dict['speechQuality'] = processed_sq
+                else:
+                    converted_dict['speechQuality'] = None
+                    
                 segment_analyses_dict.append(converted_dict)
             else:
                 segment_analyses_dict.append(analysis)

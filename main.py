@@ -315,49 +315,12 @@ class SemanticWorker:
         # Step 3: Perform comprehensive analysis (semantic + speech quality)
         logger.info(f"🔍 Step 3/5: Performing comprehensive analysis...")
         
-        segment_analyses_obj, overall_scores_obj = self.semantic_service.analyze_presentation(
+        # analyze_presentation returns (List[SegmentAnalysis dataclasses], OverallScores dataclass, SpeechQualityMetrics)
+        # We pass the dataclass objects directly to webhook_service which handles conversion
+        segment_analyses_obj, overall_scores_obj, speech_quality_metrics = self.semantic_service.analyze_presentation(
             presentation_data, 
             audio_file_path=str(audio_file_path) if audio_file_path else None
         )
-        
-        # Convert to API format
-        segment_analyses = []
-        for analysis in segment_analyses_obj:
-            segment_data = {
-                'segmentId': analysis.segment_id,
-                'relevanceScore': analysis.relevance_score,
-                'semanticScore': analysis.semantic_score,
-                'alignmentScore': analysis.alignment_score,
-                'issues': analysis.issues,
-                'suggestions': analysis.suggestions,
-                'topicKeywordsFound': analysis.topic_keywords_found,
-                'bestMatchingSlide': analysis.best_matching_slide,
-                'expectedSlideNumber': analysis.expected_slide_number,
-                'timingDeviation': analysis.timing_deviation
-            }
-            
-            # Add speech quality data if available
-            if analysis.speech_quality:
-                segment_data['speechQuality'] = analysis.speech_quality
-            
-            segment_analyses.append(segment_data)
-        
-        overall_scores = {
-            'contentRelevance': overall_scores_obj.content_relevance,
-            'semanticSimilarity': overall_scores_obj.semantic_similarity,
-            'slideAlignment': overall_scores_obj.slide_alignment,
-            'overallScore': overall_scores_obj.overall_score
-        }
-        
-        # Add speech quality scores if available
-        if overall_scores_obj.speech_fluency is not None:
-            overall_scores['speechFluency'] = overall_scores_obj.speech_fluency
-        if overall_scores_obj.speech_clarity is not None:
-            overall_scores['speechClarity'] = overall_scores_obj.speech_clarity
-        if overall_scores_obj.speech_confidence is not None:
-            overall_scores['speechConfidence'] = overall_scores_obj.speech_confidence
-        if overall_scores_obj.speech_overall is not None:
-            overall_scores['speechOverall'] = overall_scores_obj.speech_overall
         
         # Step 4: Format results
         logger.info(f"📦 Step 4/5: Formatting results...")
@@ -365,21 +328,40 @@ class SemanticWorker:
         result_metadata = {
             'embeddingModel': settings.EMBEDDING_MODEL,
             'similarityThreshold': settings.SIMILARITY_THRESHOLD,
-            'totalSegments': len(segment_analyses),
+            'totalSegments': len(segment_analyses_obj),
             'totalSlides': len(presentation_data.slides),
             'topicName': presentation_data.topic_name,
             'topicDescription': presentation_data.topic_description,
             'speechAnalysisEnabled': settings.SPEECH_ANALYSIS_ENABLED,
-            'speechAnalysisPerformed': audio_file_path is not None
+            'speechAnalysisPerformed': audio_file_path is not None,
+            'opensmileConfig': settings.OPENSMILE_CONFIG,
+            'sampleRate': settings.SPEECH_SAMPLE_RATE,
         }
         
+        # Include rich speech metrics so node-api can populate SpeechQualityAnalyses fully
+        if speech_quality_metrics:
+            result_metadata.update({
+                'speakingRate': speech_quality_metrics.speaking_rate,
+                'pitchMean': speech_quality_metrics.pitch_mean,
+                'pitchStd': speech_quality_metrics.pitch_std,
+                'energyMean': speech_quality_metrics.energy_mean,
+                'energyStd': speech_quality_metrics.energy_std,
+                'pitchVariation': speech_quality_metrics.pitch_variation,
+                'volumeVariation': speech_quality_metrics.volume_variation,
+                'speechRhythmScore': speech_quality_metrics.speech_rhythm_score,
+                'silenceRatio': speech_quality_metrics.silence_ratio,
+                'voicedRatio': speech_quality_metrics.voiced_ratio,
+                'spectralCentroidMean': speech_quality_metrics.spectral_centroid_mean,
+                'mfccFeatures': speech_quality_metrics.mfcc_features if speech_quality_metrics.mfcc_features else None,
+            })
+        
         logger.info(f"✅ Analysis complete:")
-        logger.info(f"   - Analyzed segments: {len(segment_analyses)}")
-        logger.info(f"   - Content relevance: {overall_scores['contentRelevance']:.2f}")
-        logger.info(f"   - Semantic similarity: {overall_scores['semanticSimilarity']:.2f}")
-        logger.info(f"   - Slide alignment: {overall_scores['slideAlignment']:.2f}")
-        if 'speechOverall' in overall_scores:
-            logger.info(f"   - Speech quality: {overall_scores['speechOverall']:.2f}")
+        logger.info(f"   - Analyzed segments: {len(segment_analyses_obj)}")
+        logger.info(f"   - Content relevance: {overall_scores_obj.content_relevance:.2f}")
+        logger.info(f"   - Semantic similarity: {overall_scores_obj.semantic_similarity:.2f}")
+        logger.info(f"   - Slide alignment: {overall_scores_obj.slide_alignment:.2f}")
+        if overall_scores_obj.speech_overall is not None:
+            logger.info(f"   - Speech quality: {overall_scores_obj.speech_overall:.2f}")
         
         # Step 5: Cleanup audio file
         if audio_file_path and settings.CLEANUP_TEMP_FILES:
@@ -391,9 +373,10 @@ class SemanticWorker:
             except Exception as e:
                 logger.warning(f"⚠️ Failed to cleanup audio file: {e}")
         
+        # Pass dataclass objects directly; webhook_service handles camelCase conversion
         return {
-            'segmentAnalyses': segment_analyses,
-            'overallScores': overall_scores,
+            'segmentAnalyses': segment_analyses_obj,
+            'overallScores': overall_scores_obj,
             'metadata': result_metadata
         }
     
