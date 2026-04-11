@@ -456,8 +456,8 @@ class SemanticWorker:
         Returns:
             True if filename passes security validation
         """
-        # Check for path traversal attempts
-        if '..' in filename or '/' in filename.replace(settings.S3_AUDIO_PREFIX, ''):
+        # Check for path traversal attempts (only block '..', allow '/' since S3 keys can be paths)
+        if '..' in filename:
             logger.warning(f"⚠️ Path traversal attempt detected: {filename}")
             return False
         
