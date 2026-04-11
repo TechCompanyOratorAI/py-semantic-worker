@@ -24,19 +24,23 @@ class SQSMessage:
     job_id: int
     presentation_id: int
     metadata: Dict[str, Any]
-    
+    receive_count: int = 1
+
     @classmethod
     def from_sqs_message(cls, sqs_message: Dict[str, Any]) -> 'SQSMessage':
         """Create SQSMessage from AWS SQS message"""
         try:
             body = json.loads(sqs_message['Body'])
-            
+            attributes = sqs_message.get('Attributes', {})
+            receive_count = int(attributes.get('ApproximateReceiveCount', '1'))
+
             return cls(
                 message_id=sqs_message['MessageId'],
                 receipt_handle=sqs_message['ReceiptHandle'],
                 job_id=body['jobId'],
                 presentation_id=body['presentationId'],
-                metadata=body.get('metadata', {})
+                metadata=body.get('metadata', {}),
+                receive_count=receive_count
             )
         except (json.JSONDecodeError, KeyError) as e:
             raise SQSError(f"Invalid SQS message format: {e}")

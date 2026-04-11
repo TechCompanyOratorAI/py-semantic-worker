@@ -229,8 +229,13 @@ class SemanticWorker:
             self.jobs_processed += 1
             self.jobs_failed += 1
             
-            # DO NOT delete message - allow retry after visibility timeout
-            logger.warning(f"⚠️ Message NOT deleted - will retry after visibility timeout")
+            # Delete message if max retries reached, otherwise allow retry
+            max_retries = 3
+            if message.receive_count >= max_retries:
+                logger.error(f"🚫 Job {job_id} exceeded max retries ({max_retries}). Discarding message.")
+                self.sqs_service.delete_message(message)
+            else:
+                logger.warning(f"⚠️ Message NOT deleted - will retry (attempt {message.receive_count}/{max_retries})")
             logger.info(f"📊 Stats: {self.jobs_succeeded} succeeded, {self.jobs_failed} failed, {self.jobs_processed} total")
             logger.info("")
     
