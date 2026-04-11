@@ -112,12 +112,26 @@ class SpeechQualityService:
         Returns:
             (audio_data, sample_rate)
         """
+        temp_wav_path = None
         try:
             logger.info(f"🔊 Preprocessing audio file: {audio_path}")
-            
-            # Load audio file
+
+            load_path = str(audio_path)
+
+            # soundfile cannot decode MP4/MP3/etc. – convert to WAV first
+            # to avoid "PySoundFile failed" warning and deprecated audioread fallback.
+            suffix = Path(audio_path).suffix.lower()
+            if suffix not in ('.wav', '.flac', '.ogg', '.aiff', '.aif'):
+                logger.info(f"   - Converting {suffix} → WAV for librosa compatibility")
+                audio_segment = AudioSegment.from_file(str(audio_path))
+                with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp:
+                    temp_wav_path = tmp.name
+                audio_segment.export(temp_wav_path, format='wav')
+                load_path = temp_wav_path
+
+            # Load audio file (soundfile reads WAV natively – no audioread fallback)
             audio_data, sr = librosa.load(
-                str(audio_path), 
+                load_path,
                 sr=settings.SPEECH_SAMPLE_RATE,
                 mono=True
             )
@@ -137,6 +151,12 @@ class SpeechQualityService:
             
         except Exception as e:
             raise SpeechAnalysisError(f"Failed to preprocess audio: {e}")
+        finally:
+            if temp_wav_path and os.path.exists(temp_wav_path):
+                try:
+                    os.unlink(temp_wav_path)
+                except OSError:
+                    pass
     
     def _detect_voice_activity(self, audio_data: np.ndarray, sr: int) -> np.ndarray:
         """
