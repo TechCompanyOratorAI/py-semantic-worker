@@ -55,7 +55,7 @@ class WebhookService:
         self.max_retries = 3
         self.retry_delay = 5  # Base delay in seconds
     
-    def _get_headers(self) -> Dict[str, str]:
+    def _get_headers(self, idempotency_key: str = None) -> Dict[str, str]:
         """Get headers for webhook requests"""
         headers = {
             'Content-Type': 'application/json',
@@ -64,6 +64,9 @@ class WebhookService:
         
         if self.secret:
             headers['Authorization'] = f'Bearer {self.secret}'
+
+        if idempotency_key:
+            headers['Idempotency-Key'] = idempotency_key
         
         return headers
     
@@ -83,17 +86,20 @@ class WebhookService:
             url = self.base_url + endpoint.lstrip('/')
         else:
             url = self.base_url + endpoint
-        headers = self._get_headers()
+        idempotency_key = payload.get('_idempotency_key')
+        # Remove internal key from payload before sending
+        send_payload = {k: v for k, v in payload.items() if k != '_idempotency_key'}
+        headers = self._get_headers(idempotency_key=idempotency_key)
         
         try:
             logger.info(f"📤 Sending webhook to {url}")
             # Sanitize payload – converts numpy float32/int64/ndarray → native Python
-            payload = sanitize_for_json(payload)
-            logger.debug(f"Payload: {json.dumps(payload, indent=2)}")
+            send_payload = sanitize_for_json(send_payload)
+            logger.debug(f"Payload: {json.dumps(send_payload, indent=2)}")
             
             response = requests.post(
                 url,
-                json=payload,
+                json=send_payload,
                 headers=headers,
                 timeout=self.timeout
             )
@@ -163,6 +169,8 @@ class WebhookService:
                     'expectedSlideNumber': analysis_dict.get('expected_slide_number', 1),
                     'timingDeviation': analysis_dict.get('timing_deviation', 0.0),
                     'suggestions': analysis_dict.get('suggestions', []),
+                    # Speaker label from diarization (e.g. SPEAKER_00)
+                    'speakerLabel': analysis_dict.get('speaker_label') or None,
                 }
                 
                 # Add speech quality data with camelCase keys
@@ -222,7 +230,9 @@ class WebhookService:
                 'segmentAnalyses': segment_analyses_dict,
                 'overallScores': processed_overall_scores,
                 'metadata': metadata or {}
-            }
+            },
+            # Internal key used to set Idempotency-Key header (stripped before sending)
+            '_idempotency_key': f"{job_id}-{presentation_id}"
         }
         
         return self._send_webhook('/webhooks/analysis-complete', payload)
