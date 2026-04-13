@@ -61,6 +61,8 @@ class SegmentAnalysis:
     
     # Speech quality analysis (optional)
     speech_quality: Optional[Dict[str, Any]] = None
+    # Speaker label from diarization (e.g. SPEAKER_00, SPEAKER_01)
+    speaker_label: Optional[str] = None
 
 @dataclass
 class OverallScores:
@@ -349,7 +351,53 @@ class SemanticAnalysisService:
         except Exception as e:
             logger.warning(f"⚠️ Failed to analyze alignment: {e}")
             return 0.0, None, None
-    
+
+    # ------------------------------------------------------------------
+    # Helper: expand slides with multi-page extractedText into virtual
+    # per-page entries so alignment analysis maps segments to individual
+    # pages rather than treating 31 pages as a single slide.
+    # Detects "[Trang N]" page markers written by the Node API webhook.
+    # ------------------------------------------------------------------
+    def _expand_slides_by_pages(self, slides: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Expand multi-page slides into virtual per-page slide entries."""
+        expanded = []
+        virtual_number = 0
+
+        for slide in slides:
+            extracted_text = slide.get('extractedText', '') or ''
+            # Split on [Trang N] / [Slide N] markers (case-insensitive)
+            parts = re.split(r'\[(?:Trang|Slide)\s+(\d+)\]\s*\n?', extracted_text, flags=re.IGNORECASE)
+            # parts = ['pre', '1', 'content1', '2', 'content2', ...]
+            # If no markers found, parts == [extracted_text] (length 1)
+            pages = []
+            if len(parts) >= 3:
+                for idx in range(1, len(parts) - 1, 2):
+                    page_num = int(parts[idx])
+                    page_text = parts[idx + 1].strip() if idx + 1 < len(parts) else ''
+                    pages.append((page_num, page_text))
+
+            if len(pages) > 1:
+                logger.info(
+                    f"   - Slide {slide.get('slideNumber', '?')}: expanding "
+                    f"{len(pages)} pages into virtual slides for alignment"
+                )
+                for page_num, page_text in pages:
+                    virtual_number += 1
+                    virtual = dict(slide)
+                    virtual['slideNumber'] = virtual_number
+                    virtual['extractedText'] = page_text
+                    virtual['_virtualPage'] = page_num
+                    virtual['_originalSlideId'] = slide.get('slideId')
+                    expanded.append(virtual)
+            else:
+                # Single-page or no markers — use as-is
+                virtual_number += 1
+                entry = dict(slide)
+                entry['slideNumber'] = virtual_number
+                expanded.append(entry)
+
+        return expanded
+
     def analyze_presentation(
         self, 
         presentation_data: PresentationData,
@@ -370,7 +418,17 @@ class SemanticAnalysisService:
         
         segment_analyses = []
         total_segments = len(presentation_data.transcript_segments)
-        total_slides = len(presentation_data.slides)
+
+        # Expand multi-page slides into virtual per-page entries.
+        # A PDF with 31 pages stored in 1 Slide row becomes 31 virtual
+        # slides so that alignment scores reflect actual page progress.
+        expanded_slides = self._expand_slides_by_pages(presentation_data.slides)
+        total_slides = len(expanded_slides)
+        if total_slides != len(presentation_data.slides):
+            logger.info(
+                f"   - Expanded {len(presentation_data.slides)} DB slide(s) "
+                f"→ {total_slides} virtual pages for alignment analysis"
+            )
         
         # Initialize speech quality analysis if enabled and audio file provided
         speech_quality_metrics = None
@@ -405,6 +463,22 @@ class SemanticAnalysisService:
             segment_text = segment.get('segmentText', '')
             start_time = segment.get('startTimestamp', 0)
             end_time = segment.get('endTimestamp', 0)
+            # Speaker label from diarization (may be None if not diarized)
+            speaker_label = (
+                segment.get('aiSpeakerLabel')
+                or segment.get('speakerName')
+                or None
+            )
+
+            # Normalize timestamps to seconds.
+            # ASR worker stores timestamps in milliseconds (e.g. 5200),
+            # while librosa produces times in seconds (e.g. 5.2).
+            # Heuristic: if value > 1000 it is almost certainly milliseconds.
+            def _to_seconds(ts):
+                return ts / 1000.0 if ts is not None and ts > 1000 else (ts or 0.0)
+
+            start_time_s = _to_seconds(start_time)
+            end_time_s   = _to_seconds(end_time)
             
             if not segment_text or not segment_text.strip():
                 logger.warning(f"⚠️ Segment {segment_number} has no text, skipping analysis")
@@ -419,15 +493,15 @@ class SemanticAnalysisService:
                 presentation_data.topic_description or ''
             )
             
-            # Semantic similarity analysis
+            # Semantic similarity analysis — compare against expanded virtual pages
             semantic_score, best_matching_slide, slide_similarities = self._analyze_semantic_similarity(
-                segment_text, 
-                presentation_data.slides
+                segment_text,
+                expanded_slides
             )
             
             # Alignment analysis
             alignment_score, expected_slide_number, timing_deviation = self._analyze_alignment(
-                segment_number, start_time, end_time, total_segments, total_slides, presentation_duration
+                segment_number, start_time_s, end_time_s, total_segments, total_slides, presentation_duration
             )
             
             # Generate issues and suggestions
@@ -455,13 +529,13 @@ class SemanticAnalysisService:
                 # Find hesitation patterns that overlap with this segment
                 segment_hesitations = []
                 for pattern in speech_quality_metrics.hesitation_patterns:
-                    # Check if hesitation overlaps with segment time range
-                    if (pattern.start_time <= end_time and pattern.end_time >= start_time):
+                    # Compare in the same unit: seconds (librosa) vs seconds (normalized)
+                    if (pattern.start_time <= end_time_s and pattern.end_time >= start_time_s):
                         segment_hesitations.append({
                             'startTime': pattern.start_time,
                             'endTime': pattern.end_time,
                             'duration': pattern.duration,
-                            'pattern_type': pattern.pattern_type,  # BUG FIX: was 'type', must be 'pattern_type'
+                            'pattern_type': pattern.pattern_type,
                             'confidence': pattern.confidence,
                             'description': pattern.description
                         })
@@ -503,7 +577,8 @@ class SemanticAnalysisService:
                 timing_deviation=timing_deviation,
                 issues=issues,
                 suggestions=suggestions,
-                speech_quality=segment_speech_quality
+                speech_quality=segment_speech_quality,
+                speaker_label=speaker_label
             )
             
             segment_analyses.append(analysis)
