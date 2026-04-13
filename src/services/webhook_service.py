@@ -174,26 +174,29 @@ class WebhookService:
                 }
                 
                 # Add speech quality data with camelCase keys
+                # NOTE: semantic_service.py builds segment_speech_quality with camelCase keys:
+                #   { 'hesitationCount': N, 'totalHesitationTime': T, 'hesitationPatterns': [...] }
+                # Do NOT use snake_case lookups here.
                 speech_quality_data = analysis_dict.get('speech_quality')
                 if speech_quality_data:
                     processed_sq = {
-                        'hesitationCount': speech_quality_data.get('hesitation_count', 0),
-                        'totalHesitationTime': speech_quality_data.get('total_hesitation_time', 0.0),
+                        'hesitationCount': speech_quality_data.get('hesitationCount', 0),
+                        'totalHesitationTime': speech_quality_data.get('totalHesitationTime', 0.0),
                         'hesitationPatterns': []
                     }
-                    if 'hesitation_patterns' in speech_quality_data:
-                        for pattern in speech_quality_data['hesitation_patterns']:
-                            processed_sq['hesitationPatterns'].append({
-                                'startTime': pattern.get('startTime'),       # already camelCase from semantic_service
-                                'endTime': pattern.get('endTime'),
-                                'duration': pattern.get('duration'),
-                                'patternType': pattern.get('pattern_type'),  # semantic_service uses snake_case key
-                                'confidence': pattern.get('confidence'),
-                                'description': pattern.get('description')
-                            })
+                    for pattern in (speech_quality_data.get('hesitationPatterns') or []):
+                        processed_sq['hesitationPatterns'].append({
+                            'startTime': pattern.get('startTime'),
+                            'endTime': pattern.get('endTime'),
+                            'duration': pattern.get('duration'),
+                            'patternType': pattern.get('pattern_type') or pattern.get('patternType'),
+                            'confidence': pattern.get('confidence'),
+                            'description': pattern.get('description')
+                        })
                     converted_dict['speechQuality'] = processed_sq
                 else:
                     converted_dict['speechQuality'] = None
+
                     
                 segment_analyses_dict.append(converted_dict)
             else:
