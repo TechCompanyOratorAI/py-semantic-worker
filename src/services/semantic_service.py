@@ -259,95 +259,157 @@ class SemanticAnalysisService:
     def _analyze_semantic_similarity(
         self, 
         segment_text: str, 
-        slides: List[Dict[str, Any]]
+        slides: List[Dict[str, Any]],
+        segment_embedding: Optional[np.ndarray] = None,
     ) -> Tuple[float, Optional[int], List[Tuple[int, float]]]:
         """
-        Analyze semantic similarity of segment vs slides
-        
+        Analyze semantic similarity of segment vs slides.
+
+        Applies contrastive normalization to correct multilingual-E5 baseline
+        inflation: same-language pairs score 0.55–0.75 even when unrelated.
+        Calibrated score = (best_raw - mean_raw) / (1 - mean_raw)
+        → ≈ 0 when all slides uniformly unrelated
+        → high only when there is a clear best-matching slide
+
         Returns:
-            (best_similarity_score, best_slide_number, all_similarities)
+            (calibrated_score, best_slide_number, raw_similarities)
         """
         try:
             if not slides:
                 return 0.0, None, []
-            
+
             # Extract slide texts
-            slide_texts = []
-            slide_numbers = []
-            
+            slide_texts, slide_numbers = [], []
             for slide in slides:
                 slide_text = slide.get('extractedText', '') or ''
                 if slide_text.strip():
                     slide_texts.append(slide_text)
                     slide_numbers.append(slide.get('slideNumber', 0))
-            
+
             if not slide_texts:
                 return 0.0, None, []
-            
-            # Generate embeddings
-            # segment is the query, slides are the passages
-            segment_embedding = self._generate_embeddings([segment_text], is_query=True)
+
+            # Use pre-computed embedding if available to avoid double inference
+            if segment_embedding is None or (
+                hasattr(segment_embedding, 'size') and segment_embedding.size == 0
+            ):
+                segment_embedding = self._generate_embeddings([segment_text], is_query=True)
+
             slide_embeddings = self._generate_embeddings(slide_texts, is_query=False)
-            
-            # Calculate similarities
+
+            # Compute raw cosine similarities
             similarities = []
-            for i, slide_embedding in enumerate(slide_embeddings):
-                similarity = self._calculate_similarity(segment_embedding, slide_embedding)
-                similarities.append((slide_numbers[i], similarity))
-            
-            # Sort by similarity
+            for i, slide_emb in enumerate(slide_embeddings):
+                raw_sim = self._calculate_similarity(segment_embedding, slide_emb)
+                similarities.append((slide_numbers[i], raw_sim))
+
             similarities.sort(key=lambda x: x[1], reverse=True)
-            
-            # Get best match
-            best_similarity = similarities[0][1] if similarities else 0.0
-            best_slide_number = similarities[0][0] if similarities else None
-            
-            return best_similarity, best_slide_number, similarities
-            
+
+            best_raw    = similarities[0][1] if similarities else 0.0
+            best_slide  = similarities[0][0] if similarities else None
+
+            # --- Contrastive normalization ---
+            # calibrated = (best - mean) / (1 - mean)
+            # If ALL slides score similarly (all unrelated), calibrated ≈ 0.
+            # If one slide clearly dominates, calibrated is high.
+            if len(similarities) > 1:
+                all_raw   = [s[1] for s in similarities]
+                mean_raw  = float(np.mean(all_raw))
+                denom     = 1.0 - mean_raw
+                calibrated = (best_raw - mean_raw) / denom if denom > 1e-6 else 0.0
+                calibrated = max(0.0, min(1.0, calibrated))
+            else:
+                # Only 1 slide — shift by ~0.5 baseline and normalise
+                calibrated = max(0.0, min(1.0, (best_raw - 0.5) * 2.0))
+
+            return calibrated, best_slide, similarities
+
         except Exception as e:
             logger.warning(f"⚠️ Failed to analyze semantic similarity: {e}")
             return 0.0, None, []
     
     def _analyze_alignment(
-        self, 
-        segment_number: int, 
+        self,
+        segment_number: int,
         segment_start_time: float,
         segment_end_time: float,
         total_segments: int,
         total_slides: int,
-        presentation_duration: Optional[float] = None
+        presentation_duration: Optional[float] = None,
+        segment_embedding: Optional[np.ndarray] = None,
+        slides: Optional[List[Dict[str, Any]]] = None,
     ) -> Tuple[float, Optional[int], Optional[float]]:
         """
-        Analyze timing alignment of segment vs expected slide
-        
+        Analyze timing alignment of segment vs expected slide.
+
+        Strict scoring — 35 % temporal position + 65 % content match:
+        - temporal_score  : how close is timing to the expected slide
+        - content_match   : cosine(segment, EXPECTED slide text), baseline-corrected
+
+        If the speaker talks about an unrelated topic the content-match term
+        drives the score to ~0 regardless of temporal ordering.
+
         Returns:
             (alignment_score, expected_slide_number, timing_deviation)
         """
+        TEMPORAL_WEIGHT = 0.35
+        CONTENT_WEIGHT  = 0.65
+        # Typical E5 cosine for unrelated same-language pairs ≈ 0.55
+        CONTENT_BASELINE = 0.55
+
         try:
             if total_slides == 0:
                 return 0.0, None, None
-            
-            # Simple heuristic: assume slides should be evenly distributed over time
-            segment_progress = segment_number / total_segments
+
+            # 1. Expected slide from temporal progress
+            segment_progress     = segment_number / total_segments
             expected_slide_number = max(1, min(total_slides, int(segment_progress * total_slides) + 1))
-            
-            # Calculate timing deviation
+
+            # 2. Temporal score
             if presentation_duration and presentation_duration > 0:
-                expected_time_progress = expected_slide_number / total_slides
-                actual_time_progress = (segment_start_time + segment_end_time) / 2 / presentation_duration
-                timing_deviation = abs(expected_time_progress - actual_time_progress)
-                
-                # Convert to alignment score (1.0 = perfect alignment, 0.0 = completely misaligned)
-                alignment_score = max(0.0, 1.0 - timing_deviation * 2)
+                expected_t = expected_slide_number / total_slides
+                actual_t   = (
+                    (segment_start_time + segment_end_time) / 2 / presentation_duration
+                )
+                timing_deviation = abs(expected_t - actual_t)
+                temporal_score   = max(0.0, 1.0 - timing_deviation * 2)
             else:
-                # Fallback: use segment position alignment
-                expected_segment_for_slide = (expected_slide_number - 1) * total_segments / total_slides
-                position_deviation = abs(segment_number - expected_segment_for_slide) / total_segments
-                alignment_score = max(0.0, 1.0 - position_deviation * 2)
-                timing_deviation = position_deviation
-            
+                expected_seg_pos = (expected_slide_number - 1) * total_segments / total_slides
+                position_dev     = abs(segment_number - expected_seg_pos) / total_segments
+                temporal_score   = max(0.0, 1.0 - position_dev * 2)
+                timing_deviation = position_dev
+
+            # 3. Content match: segment vs the EXPECTED slide page
+            content_match_score = 0.0
+            if segment_embedding is not None and slides:
+                idx = expected_slide_number - 1  # 0-indexed
+                if 0 <= idx < len(slides):
+                    expected_text = slides[idx].get('extractedText', '') or ''
+                    if expected_text.strip():
+                        try:
+                            expected_emb   = self._generate_embeddings([expected_text], is_query=False)
+                            raw_content    = self._calculate_similarity(segment_embedding, expected_emb)
+                            # Baseline-correct: shift out the ≈0.55 floor
+                            denom = 1.0 - CONTENT_BASELINE
+                            content_match_score = max(
+                                0.0,
+                                min(1.0, (raw_content - CONTENT_BASELINE) / denom)
+                            )
+                        except Exception:
+                            content_match_score = 0.0
+
+            # 4. Blend (strict: content dominates)
+            if segment_embedding is not None and slides:
+                alignment_score = (
+                    TEMPORAL_WEIGHT * temporal_score
+                    + CONTENT_WEIGHT  * content_match_score
+                )
+            else:
+                # Fallback when no embeddings available
+                alignment_score = temporal_score
+
             return alignment_score, expected_slide_number, timing_deviation
-            
+
         except Exception as e:
             logger.warning(f"⚠️ Failed to analyze alignment: {e}")
             return 0.0, None, None
@@ -449,8 +511,12 @@ class SemanticAnalysisService:
         # Estimate presentation duration from last segment
         presentation_duration = None
         if presentation_data.transcript_segments:
-            last_segment = max(presentation_data.transcript_segments, key=lambda s: s.get('endtimestamp', 0))
-            presentation_duration = last_segment.get('endtimestamp', 0)
+            last_segment = max(presentation_data.transcript_segments,
+                               key=lambda s: s.get('endTimestamp') or s.get('endtimestamp') or 0)
+            raw_dur = last_segment.get('endTimestamp') or last_segment.get('endtimestamp') or 0
+            # Normalize to seconds (same heuristic as _to_seconds)
+            presentation_duration = raw_dur / 1000.0 if raw_dur > 1000 else (raw_dur or None)
+
         
         logger.info(f"   - Analyzing {total_segments} segments against {total_slides} slides")
         logger.info(f"   - Topic: {presentation_data.topic_name}")
@@ -485,23 +551,37 @@ class SemanticAnalysisService:
                 continue
             
             logger.debug(f"Analyzing segment {segment_number}: {segment_text[:50]}...")
-            
-            # Content relevance analysis
+
+            # Generate segment embedding ONCE — reused by semantic similarity AND
+            # alignment (content-match term). Avoids redundant model inference.
+            try:
+                segment_embedding = self._generate_embeddings([segment_text], is_query=True)
+                if not hasattr(segment_embedding, 'size') or segment_embedding.size == 0:
+                    segment_embedding = None
+            except Exception as emb_err:
+                logger.warning(f"⚠️ Embedding failed for segment {segment_number}: {emb_err}")
+                segment_embedding = None
+
+            # Content relevance analysis (topic match)
             relevance_score, topic_keywords_found, off_topic_indicators = self._analyze_content_relevance(
-                segment_text, 
-                presentation_data.topic_name, 
+                segment_text,
+                presentation_data.topic_name,
                 presentation_data.topic_description or ''
             )
-            
-            # Semantic similarity analysis — compare against expanded virtual pages
+
+            # Semantic similarity — contrastive-normalised against all virtual pages
             semantic_score, best_matching_slide, slide_similarities = self._analyze_semantic_similarity(
                 segment_text,
-                expanded_slides
+                expanded_slides,
+                segment_embedding=segment_embedding,
             )
-            
-            # Alignment analysis
+
+            # Alignment — strict blend: 35 % temporal + 65 % content match with expected slide
             alignment_score, expected_slide_number, timing_deviation = self._analyze_alignment(
-                segment_number, start_time_s, end_time_s, total_segments, total_slides, presentation_duration
+                segment_number, start_time_s, end_time_s, total_segments, total_slides,
+                presentation_duration,
+                segment_embedding=segment_embedding,
+                slides=expanded_slides,
             )
             
             # Generate issues and suggestions
