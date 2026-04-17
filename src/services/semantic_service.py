@@ -533,6 +533,8 @@ class SemanticAnalysisService:
             speaker_label = (
                 segment.get('aiSpeakerLabel')
                 or segment.get('speakerName')
+                or segment.get('aispeakerlabel')
+                or segment.get('speakername')
                 or None
             )
 
