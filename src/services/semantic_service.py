@@ -533,6 +533,8 @@ class SemanticAnalysisService:
             speaker_label = (
                 segment.get('aiSpeakerLabel')
                 or segment.get('speakerName')
+                or segment.get('aispeakerlabel')
+                or segment.get('speakername')
                 or None
             )
 
@@ -663,12 +665,17 @@ class SemanticAnalysisService:
             
             segment_analyses.append(analysis)
         
-        # Calculate overall scores
+        # Calculate overall scores (structural dimensions only)
+        # NOTE: contentRelevance is stored per-segment for reference but is NOT
+        # included in overallScore. Embedding similarity cannot reliably judge
+        # whether the speaker actually covered the topic — that requires LLM
+        # understanding. overallScore = structural quality only (semantic + alignment).
         if segment_analyses:
             avg_relevance = np.mean([s.relevance_score for s in segment_analyses])
-            avg_semantic = np.mean([s.semantic_score for s in segment_analyses])
+            avg_semantic  = np.mean([s.semantic_score  for s in segment_analyses])
             avg_alignment = np.mean([s.alignment_score for s in segment_analyses])
-            overall = (avg_relevance + avg_semantic + avg_alignment) / 3
+            # 50% slide content match + 50% slide ordering alignment
+            overall = avg_semantic * 0.5 + avg_alignment * 0.5
         else:
             avg_relevance = avg_semantic = avg_alignment = overall = 0.0
         
