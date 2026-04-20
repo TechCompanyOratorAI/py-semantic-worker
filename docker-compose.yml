@@ -1,126 +1,16 @@
-version: "3.9"
-
-# ============================================================
-# OratorAI Semantic Worker - Docker Compose
-# ============================================================
-# Usage:
-#   Development (with local Postgres):
-#     docker-compose --profile localdb up
-#
-#   Production (external Postgres):
-#     docker-compose up
-# ============================================================
+version: '3.8'
 
 services:
-  # ----------------------------------------------------------------
-  # Semantic Worker - Main Service
-  # ----------------------------------------------------------------
   semantic-worker:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: production
-    image: oratorai-semantic-worker:latest
-    container_name: semantic-worker
-    restart: unless-stopped
-
+    build: .
+    container_name: py-semantic-worker
     env_file:
       - .env
-
-    environment:
-      # Override DB_HOST when using local postgres profile
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      - LOG_FORMAT=${LOG_FORMAT:-colored}
-      - TEMP_DIR=/tmp/semantic-worker
-      - CLEANUP_TEMP_FILES=${CLEANUP_TEMP_FILES:-true}
-
     volumes:
-      # Persist model cache across container restarts
-      - model-cache:/app/model-cache
-      # Temp working directory
-      - /tmp/semantic-worker:/tmp/semantic-worker
-
-    depends_on:
-      mysql:
-        condition: service_healthy
-        required: false
-
-    healthcheck:
-      test: ["CMD", "python", "health_check.py"]
-      interval: 60s
-      timeout: 30s
-      start_period: 120s
-      retries: 3
-
-    deploy:
-      resources:
-        limits:
-          memory: 2G
-          cpus: "2.0"
-        reservations:
-          memory: 512M
-          cpus: "0.5"
-
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "50m"
-        max-file: "5"
-
-    networks:
-      - worker-net
-
-  # ----------------------------------------------------------------
-  # Local MySQL (optional - use profile: localdb)
-  # For development/testing only - use external DB in production
-  # ----------------------------------------------------------------
-  mysql:
-    image: mysql:8.0
-    container_name: oratorai-mysql
-    profiles:
-      - localdb
+      # Mount tmp dir for audio file downloads
+      - semantic-tmp:/tmp/semantic-worker
     restart: unless-stopped
+    command: python main.py
 
-    environment:
-      MYSQL_DATABASE: ${DB_NAME:-oratorai}
-      MYSQL_USER: ${DB_USER:-oratorai}
-      MYSQL_PASSWORD: ${DB_PASSWORD:-oratorai_password}
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root_password}
-
-    volumes:
-      - mysql-data:/var/lib/mysql
-
-    ports:
-      - "${DB_PORT:-3306}:3306"
-
-    command: --default-authentication-plugin=mysql_native_password
-
-    healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "${DB_USER:-oratorai}", "-p${DB_PASSWORD:-oratorai_password}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
-
-    networks:
-      - worker-net
-
-# ----------------------------------------------------------------
-# Volumes
-# ----------------------------------------------------------------
 volumes:
-  model-cache:
-    name: oratorai-model-cache
-    driver: local
-
-  mysql-data:
-    name: oratorai-mysql-data
-    driver: local
-
-# ----------------------------------------------------------------
-# Networks
-# ----------------------------------------------------------------
-networks:
-  worker-net:
-    name: oratorai-worker-net
-    driver: bridge
+  semantic-tmp:
