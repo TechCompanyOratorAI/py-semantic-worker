@@ -92,6 +92,8 @@ WAIT_TIME_SECONDS=20
 
 # Analysis Settings
 EMBEDDING_MODEL=sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+ENABLE_GPU=false
+# EMBEDDING_DEVICE=auto
 SIMILARITY_THRESHOLD=0.7
 BATCH_SIZE=32
 
@@ -217,6 +219,35 @@ docker run -d \
   oratorai-semantic-worker
 ```
 
+### GPU Embeddings
+
+Set `ENABLE_GPU=true` to require GPU for sentence-transformer inference. With `ENABLE_GPU=false`, embeddings run on CPU unless `EMBEDDING_DEVICE` is set.
+
+```bash
+ENABLE_GPU=true
+```
+
+For advanced control, set `EMBEDDING_DEVICE`. If this is set, it overrides `ENABLE_GPU`:
+
+```bash
+# auto: use CUDA when available, otherwise CPU
+EMBEDDING_DEVICE=auto
+
+# cpu: force CPU
+EMBEDDING_DEVICE=cpu
+
+# cuda/gpu: require NVIDIA CUDA, fail fast if unavailable
+EMBEDDING_DEVICE=cuda
+```
+
+For Docker Compose with GPU enabled:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build
+```
+
+The host must have an NVIDIA driver and NVIDIA Container Toolkit installed. The Python image also needs a CUDA-enabled `torch` build for `EMBEDDING_DEVICE=cuda`.
+
 ## Monitoring
 
 ### Health Checks
@@ -280,7 +311,7 @@ python -c "import psycopg2; psycopg2.connect('your_database_url')"
 
 - Increase `MAX_MESSAGES` for higher throughput
 - Deploy multiple worker instances
-- Use GPU-enabled instances for faster embedding generation
+- Use `ENABLE_GPU=true` or `EMBEDDING_DEVICE=auto/cuda` on GPU-enabled instances for faster embedding generation
 
 ## Development
 

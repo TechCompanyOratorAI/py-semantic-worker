@@ -1,0 +1,9 @@
+services:
+  semantic-worker:
+    environment:
+      ENABLE_GPU: "true"
+    gpus:
+      - driver: nvidia
+        count: all
+        capabilities:
+          - gpu

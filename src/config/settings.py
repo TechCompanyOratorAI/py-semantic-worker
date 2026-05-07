@@ -11,6 +11,13 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
+def _env_bool(name, default=False):
+    """Read a boolean environment variable."""
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {'1', 'true', 'yes', 'y', 'on'}
+
 class Settings:
     """Configuration settings for semantic worker"""
     
@@ -40,6 +47,13 @@ class Settings:
     
     # Semantic Analysis Configuration
     EMBEDDING_MODEL = os.getenv('EMBEDDING_MODEL', 'sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2')
+    ENABLE_GPU = _env_bool('ENABLE_GPU', False)
+    _EMBEDDING_DEVICE = os.getenv('EMBEDDING_DEVICE')
+    EMBEDDING_DEVICE = (
+        _EMBEDDING_DEVICE.strip().lower()
+        if _EMBEDDING_DEVICE and _EMBEDDING_DEVICE.strip()
+        else ('cuda' if ENABLE_GPU else 'cpu')
+    )
     SIMILARITY_THRESHOLD = float(os.getenv('SIMILARITY_THRESHOLD', '0.7'))
     BATCH_SIZE = int(os.getenv('BATCH_SIZE', '32'))
     
@@ -84,6 +98,12 @@ class Settings:
         
         if missing:
             raise ValueError(f"Missing required environment variables: {', '.join(missing)}")
+
+        valid_embedding_devices = {'auto', 'cpu', 'cuda', 'gpu'}
+        if cls.EMBEDDING_DEVICE not in valid_embedding_devices:
+            raise ValueError(
+                "EMBEDDING_DEVICE must be one of: auto, cpu, cuda, gpu"
+            )
         
         # Create temp directory if it doesn't exist
         cls.TEMP_DIR.mkdir(parents=True, exist_ok=True)

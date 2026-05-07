@@ -13,6 +13,7 @@ import numpy as np
 from typing import List, Dict, Any, Tuple, Optional
 from dataclasses import dataclass
 from sentence_transformers import SentenceTransformer
+import torch
 from sklearn.metrics.pairwise import cosine_similarity
 import nltk
 from nltk.corpus import stopwords
@@ -89,8 +90,10 @@ class SemanticAnalysisService:
     def _initialize(self):
         """Initialize the service with intfloat/multilingual-e5-small"""
         try:
+            device = self._resolve_embedding_device()
             logger.info(f"🧠 Loading embedding model: {settings.EMBEDDING_MODEL}")
-            self.model = SentenceTransformer(settings.EMBEDDING_MODEL)
+            logger.info(f"⚙️ Embedding device: {device} (configured: {settings.EMBEDDING_DEVICE})")
+            self.model = SentenceTransformer(settings.EMBEDDING_MODEL, device=device)
             logger.info("✅ Embedding model loaded — using E5 query/passage prefixes")
             
             # Load Vietnamese stopwords
@@ -98,6 +101,29 @@ class SemanticAnalysisService:
             
         except Exception as e:
             raise EmbeddingError(f"Failed to initialize semantic analysis service: {e}")
+
+    def _resolve_embedding_device(self) -> str:
+        """Resolve the torch device used for sentence-transformer inference."""
+        configured_device = settings.EMBEDDING_DEVICE
+
+        if configured_device in {'cuda', 'gpu'}:
+            if not torch.cuda.is_available():
+                raise EmbeddingError(
+                    "EMBEDDING_DEVICE is set to cuda/gpu but CUDA is not available. "
+                    "Install a CUDA-enabled torch build and expose the GPU to the container."
+                )
+            return 'cuda'
+
+        if configured_device == 'cpu':
+            return 'cpu'
+
+        if torch.cuda.is_available():
+            gpu_name = torch.cuda.get_device_name(0)
+            logger.info(f"✅ CUDA detected: {gpu_name}")
+            return 'cuda'
+
+        logger.info("ℹ️ CUDA not detected, using CPU for embeddings")
+        return 'cpu'
     
     def _load_vietnamese_stopwords(self):
         """Load Vietnamese stopwords"""

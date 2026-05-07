@@ -1,11 +1,12 @@
-version: '3.8'
-
 services:
   semantic-worker:
     build: .
     container_name: py-semantic-worker
     env_file:
       - .env
+    environment:
+      # Set ENABLE_GPU=true to require GPU, or EMBEDDING_DEVICE for advanced control.
+      ENABLE_GPU: ${ENABLE_GPU:-false}
     volumes:
       # Mount tmp dir for audio file downloads
       - semantic-tmp:/tmp/semantic-worker

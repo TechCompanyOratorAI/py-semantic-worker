@@ -57,6 +57,8 @@ class SemanticWorker:
         logger.info("=" * 80)
         logger.info(f"📊 Configuration:")
         logger.info(f"   - Embedding Model: {settings.EMBEDDING_MODEL}")
+        logger.info(f"   - Enable GPU: {settings.ENABLE_GPU}")
+        logger.info(f"   - Embedding Device: {settings.EMBEDDING_DEVICE}")
         logger.info(f"   - Similarity Threshold: {settings.SIMILARITY_THRESHOLD}")
         logger.info(f"   - Poll Interval: {settings.POLL_INTERVAL}s")
         logger.info(f"   - Max Messages: {settings.MAX_MESSAGES}")
